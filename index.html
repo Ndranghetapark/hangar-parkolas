@@ -65,6 +65,10 @@
     font-weight: bold;
     color: #555;
   }
+  #saveBtn[disabled] {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
 </style>
 </head>
 <body>
@@ -86,15 +90,34 @@
   <img id="hangarImg" src="hangar.png" alt="Hangár parkolási rend" />
 </div>
 
+<!-- Firebase (compat) -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
 <script>
+// 🔧 Firebase config – a te projektedhez
+const firebaseConfig = {
+  apiKey: "AIzaSyD83Ad3v0ZsI1QaqjzXvg4X-we1GP3NAcM",
+  authDomain: "hangar-parkolas.firebaseapp.com",
+  databaseURL: "https://hangar-parkolas-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "hangar-parkolas",
+  storageBucket: "hangar-parkolas.firebasestorage.app",
+  messagingSenderId: "975134849760",
+  appId: "1:975134849760:web:77e05ea356e7b9e295ee85"
+};
+
+// Firebase init
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+// ---- APP LOGIKA ----
 let editMode = false;
 const spots = {};       // id -> DOM elem
 const spotStates = {};  // id -> 'free' | 'occupied'
-const STORAGE_KEY = 'hangar_parkolas_state';
 
 /*
-  Alap parkolóhelyek – ezek a koordináták határozzák meg,
-  hova kerül a piros/zöld glow. Ezeket tudod finomhangolni.
+  Fix parkolóhelyek – csak INNEN jönnek a pozíciók.
+  Ezeket tudod kézzel finomhangolni.
 */
 const baseSpots = [
   {n:1,x:88,y:65},
@@ -140,8 +163,8 @@ const baseSpots = [
   {n:33,x:88,y:32},
   {n:34,x:88,y:38},
 
-  // jobb alsó 1–4 (ha használod őket)
-  {n:101,x:90,y:60}, // pl. 1-es autó a jobb oldalon – saját id-vel
+  // extra – ha kell
+  {n:101,x:90,y:60}
 ];
 
 /* Csak a kinézetet frissíti (zöld/piros glow) */
@@ -153,92 +176,85 @@ function updateSpotVisual(id) {
   el.classList.toggle('occupied', state === 'occupied');
 }
 
-/* Új spot létrehozása vagy frissítése adott pozícióra */
-function createSpot(id, xPercent, yPercent, state) {
+/* Új spot DOM létrehozása megadott pozícióra */
+function createSpot(id, xPercent, yPercent) {
   const container = document.getElementById('container');
 
   if (spots[id]) {
     const el = spots[id];
     el.style.left = xPercent + '%';
     el.style.top = yPercent + '%';
-    if (state) spotStates[id] = state;
     updateSpotVisual(id);
     return;
   }
 
   const d = document.createElement('div');
-  d.className = 'spot';
+  d.className = 'spot free';
   d.style.left = xPercent + '%';
   d.style.top = yPercent + '%';
 
   spots[id] = d;
-  spotStates[id] = state || spotStates[id] || 'free';
+  // alapállapot: szabad, amíg a Firebase mást nem mond
+  if (!spotStates[id]) spotStates[id] = 'free';
   updateSpotVisual(id);
 
   d.addEventListener('click', function(e) {
     e.stopPropagation();
-    toggleSpot(id);
+    toggleLocalState(id);
   });
 
   container.appendChild(d);
 }
 
-/* Ha nincs mentés, ezekkel indulunk */
-function placeSpots() {
-  baseSpots.forEach(s => {
-    createSpot(String(s.n), s.x, s.y, 'free');
-  });
-}
-
-/* Foglalt / szabad váltása (csak szerkesztési módban) */
-function toggleSpot(id) {
+/* Foglalt / szabad váltása – CSAK HELYBEN, mentés nélkül */
+function toggleLocalState(id) {
   if (!editMode) return;
   const current = spotStates[id] || 'free';
   spotStates[id] = current === 'free' ? 'occupied' : 'free';
   updateSpotVisual(id);
 }
 
-/* Összes spot állapotának mentése localStorage-ba */
+/* Mentés gomb – az ÖSSZES aktuális állapot felmegy Firebase-be */
 function saveState() {
   if (!editMode) {
     alert('Menteni csak szerkesztési módban lehet.');
     return;
   }
-  const data = {};
+  const states = {};
   for (const id in spots) {
-    const el = spots[id];
-    data[id] = {
-      x: parseFloat(el.style.left),
-      y: parseFloat(el.style.top),
-      state: spotStates[id] || 'free'
-    };
+    states[id] = spotStates[id] || 'free';
   }
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    alert('Mentés sikeres. Az aktuális állapot ezen a gépen el lesz mentve.');
-  } catch (e) {
-    console.error(e);
-    alert('Hiba történt a mentés közben (localStorage).');
-  }
+
+  db.ref('spots').set(states)
+    .then(() => {
+      alert('Mentés sikeres. Az aktuális állapot elmentve a szerverre.');
+    })
+    .catch(err => {
+      console.error(err);
+      alert('Hiba történt a mentés közben.');
+    });
 }
 
-/* Betöltés induláskor */
-function loadState() {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) {
-    placeSpots();
-    return;
-  }
-  try {
-    const data = JSON.parse(raw);
-    for (const id in data) {
-      const s = data[id];
-      createSpot(id, s.x, s.y, s.state);
+/* Kezdéskor: összes buborék felrakása, majd Firebase-ből állapot betöltése + figyelés */
+function init() {
+  // buborékok létrehozása a fix pozíciókból
+  baseSpots.forEach(s => {
+    const id = String(s.n);
+    createSpot(id, s.x, s.y);
+  });
+
+  // Firebase-ből foglaltsági állapot betöltése / figyelése
+  db.ref('spots').on('value', snapshot => {
+    const data = snapshot.val() || {};
+    for (const id in spots) {
+      if (data[id] === 'free' || data[id] === 'occupied') {
+        spotStates[id] = data[id];
+      } else {
+        spotStates[id] = 'free';
+      }
+      updateSpotVisual(id);
     }
-  } catch (e) {
-    console.error(e);
-    placeSpots();
-  }
+  });
 }
 
 /* Login */
@@ -263,29 +279,8 @@ function login() {
   closeLogin();
 }
 
-/* Új helyek felvétele kattintással (ha akarsz plusz pontokat) */
-function enableAddOnClick() {
-  const img = document.getElementById('hangarImg');
-  img.addEventListener('click', function(e) {
-    if (!editMode) return;
-
-    const container = document.getElementById('container');
-    const rect = container.getBoundingClientRect();
-    const xPercent = ((e.clientX - rect.left) / rect.width) * 100;
-    const yPercent = ((e.clientY - rect.top) / rect.height) * 100;
-
-    const idStr = prompt('Melyik azonosítót szeretnéd ide tenni? (pl. 35)');
-    if (!idStr) return;
-    const id = idStr.trim();
-    if (!id) return;
-
-    createSpot(id, xPercent, yPercent, 'free');
-  });
-}
-
-/* Indítás */
-loadState();
-enableAddOnClick();
+// Indítás
+init();
 </script>
 </body>
 </html>
