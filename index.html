@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Hangár parkolási rend</title>
+<title>Hangár parkolási rend – RealTime</title>
 <style>
   body {
     font-family: Arial, sans-serif;
@@ -11,19 +11,22 @@
     margin: 0;
     padding: 0;
   }
+
   #container {
     position: relative;
     width: 100%;
     max-width: 1400px;
     margin: auto;
+    margin-top: 20px;
   }
+
   #hangarImg {
     width: 100%;
     height: auto;
     display: block;
   }
 
-  /* A kattintható pont – nincs szöveg, csak glow */
+  /* Glow spotok – NINCS szám, csak fényudvar */
   .spot {
     position: absolute;
     width: 32px;
@@ -32,15 +35,14 @@
     border-radius: 50%;
     background: transparent;
     cursor: pointer;
-    box-shadow: 0 0 0 0 rgba(0,0,0,0);
     pointer-events: auto;
   }
-  /* Szabad: zöld fényudvar */
-  .spot.free {
+
+  .free {
     box-shadow: 0 0 14px 5px rgba(0, 255, 0, 0.9);
   }
-  /* Foglalt: piros fényudvar */
-  .spot.occupied {
+
+  .occupied {
     box-shadow: 0 0 14px 5px rgba(255, 0, 0, 0.9);
   }
 
@@ -51,241 +53,148 @@
     background: white;
     padding: 20px;
     border-radius: 8px;
-    box-shadow: 0 0 12px rgba(0,0,0,0.2);
+    box-shadow: 0 0 12px rgba(0,0,0,0.3);
     display: none;
     z-index: 1000;
   }
+
   #topBar {
     padding: 8px 12px;
     display: flex;
-    gap: 8px;
+    gap: 10px;
     align-items: center;
   }
+
   #editStatus {
     font-weight: bold;
-    color: #555;
+    color: #444;
   }
 </style>
 </head>
 <body>
+
+<!-- LOGIN BOX -->
 <div id="loginBox">
   <h3>Belépés szerkesztési módba</h3>
-  <input id="user" placeholder="Felhasználónév" /><br><br>
-  <input id="pass" placeholder="Jelszó" type="password" /><br><br>
-  <button onclick="login()">Belépés</button>
+  <input id="user" placeholder="Felhasználónév"><br><br>
+  <input id="pass" type="password" placeholder="Jelszó"><br><br>
+  <button onclick="login()">Belép</button>
   <button onclick="closeLogin()">Mégse</button>
 </div>
 
+<!-- FELSŐ SÁV -->
 <div id="topBar">
   <button onclick="openLogin()">Szerkesztési mód</button>
-  <button id="saveBtn" onclick="saveState()" disabled>💾 Mentés</button>
   <span id="editStatus">Néző mód</span>
 </div>
 
+<!-- KÉP ÉS GLOW PONTOK -->
 <div id="container">
-  <img id="hangarImg" src="hangar.png" alt="Hangár parkolási rend" />
+  <img id="hangarImg" src="hangar.png">
 </div>
 
+<!-- FIREBASE SCRIPT -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
 <script>
+// --- FIREBASE KONFIG (A TE ÉLES ADATAIDDAL) ---
+const firebaseConfig = {
+  apiKey: "AIzaSyD83Ad3v0ZsI1QaqjzXvg4X-we1GP3NAcM",
+  authDomain: "hangar-parkolas.firebaseapp.com",
+  databaseURL: "https://hangar-parkolas-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "hangar-parkolas",
+  storageBucket: "hangar-parkolas.firebasestorage.app",
+  messagingSenderId: "975134849760",
+  appId: "1:975134849760:web:77e05ea356e7b9e295ee85"
+};
+
+// Firebase init
+const app = firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+// Szerkesztési mód
 let editMode = false;
-const spots = {};       // id -> DOM elem
-const spotStates = {};  // id -> 'free' | 'occupied'
-const STORAGE_KEY = 'hangar_parkolas_state';
 
-/*
-  Alap parkolóhelyek – ezek a koordináták határozzák meg,
-  hova kerül a piros/zöld glow. Ezeket tudod finomhangolni.
-*/
+// Alap pozíciók – ezek maradnak, mert szépen beállítottad
 const baseSpots = [
-  {n:1,x:88,y:65},
-  {n:2,x:88,y:73},
-  {n:3,x:85,y:82},
-  {n:4,x:78,y:87},
-  {n:5,x:61,y:87},
-  {n:6,x:55,y:87},
-  {n:7,x:50,y:87},
-  {n:8,x:45,y:87},
-  {n:9,x:39,y:87},
-  {n:10,x:34,y:87},
-
-  // alsó sor finomítva
-  {n:11,x:30,y:86},
-  {n:12,x:25,y:86},
-
-  // bal oldal
-  {n:13,x:18,y:72},
-  {n:14,x:18,y:66},
-  {n:15,x:18,y:60},
-  {n:16,x:18,y:54},
-  {n:17,x:18,y:48},
-  {n:18,x:18,y:42},
-  {n:19,x:18,y:36},
-  {n:20,x:18,y:30},
-  {n:21,x:18,y:24},
-
-  // felső sor
-  {n:22,x:26,y:17},
-  {n:23,x:32,y:17},
-  {n:24,x:38,y:17},
-  {n:25,x:44,y:17},
-  {n:26,x:50,y:17},
-  {n:27,x:56,y:17},
-  {n:28,x:62,y:17},
-  {n:29,x:68,y:17},
-  {n:30,x:74,y:17},
-  {n:31,x:80,y:17},
-  {n:32,x:86,y:17},
-
-  // jobb oldal
-  {n:33,x:88,y:32},
-  {n:34,x:88,y:38},
-
-  // jobb alsó 1–4 (ha használod őket)
-  {n:101,x:90,y:60}, // pl. 1-es autó a jobb oldalon – saját id-vel
+  {n:1,x:88,y:65},{n:2,x:88,y:73},{n:3,x:85,y:82},{n:4,x:78,y:87},
+  {n:5,x:61,y:87},{n:6,x:55,y:87},{n:7,x:50,y:87},{n:8,x:45,y:87},
+  {n:9,x:39,y:87},{n:10,x:34,y:87},{n:11,x:30,y:86},{n:12,x:25,y:86},
+  {n:13,x:18,y:72},{n:14,x:18,y:66},{n:15,x:18,y:60},{n:16,x:18,y:54},
+  {n:17,x:18,y:48},{n:18,x:18,y:42},{n:19,x:18,y:36},{n:20,x:18,y:30},
+  {n:21,x:18,y:24},{n:22,x:26,y:17},{n:23,x:32,y:17},{n:24,x:38,y:17},
+  {n:25,x:44,y:17},{n:26,x:50,y:17},{n:27,x:56,y:17},{n:28,x:62,y:17},
+  {n:29,x:68,y:17},{n:30,x:74,y:17},{n:31,x:80,y:17},{n:32,x:86,y:17},
+  {n:33,x:88,y:32},{n:34,x:88,y:38}
 ];
 
-/* Csak a kinézetet frissíti (zöld/piros glow) */
-function updateSpotVisual(id) {
-  const el = spots[id];
-  if (!el) return;
-  const state = spotStates[id] || 'free';
-  el.classList.toggle('free', state === 'free');
-  el.classList.toggle('occupied', state === 'occupied');
-}
+// DOM referencia
+const container = document.getElementById('container');
+const spotsDOM = {}; // id -> elem
 
-/* Új spot létrehozása vagy frissítése adott pozícióra */
-function createSpot(id, xPercent, yPercent, state) {
-  const container = document.getElementById('container');
-
-  if (spots[id]) {
-    const el = spots[id];
-    el.style.left = xPercent + '%';
-    el.style.top = yPercent + '%';
-    if (state) spotStates[id] = state;
-    updateSpotVisual(id);
-    return;
-  }
-
+// DOM létrehozás
+function createSpot(n, x, y) {
   const d = document.createElement('div');
-  d.className = 'spot';
-  d.style.left = xPercent + '%';
-  d.style.top = yPercent + '%';
+  d.className = "spot free";
+  d.style.left = x + "%";
+  d.style.top = y + "%";
 
-  spots[id] = d;
-  spotStates[id] = state || spotStates[id] || 'free';
-  updateSpotVisual(id);
-
-  d.addEventListener('click', function(e) {
-    e.stopPropagation();
-    toggleSpot(id);
+  d.addEventListener("click", () => {
+    if (!editMode) return;
+    toggleSpot(n);
   });
 
   container.appendChild(d);
+  spotsDOM[n] = d;
 }
 
-/* Ha nincs mentés, ezekkel indulunk */
-function placeSpots() {
-  baseSpots.forEach(s => {
-    createSpot(String(s.n), s.x, s.y, 'free');
+// Firebase → DOM frissítés
+function setVisual(n, state) {
+  if (!spotsDOM[n]) return;
+  spotsDOM[n].classList.remove("free","occupied");
+  spotsDOM[n].classList.add(state);
+}
+
+// Foglaltság váltása + mentés Firebase-be
+function toggleSpot(n) {
+  const ref = db.ref("spots/" + n);
+  ref.once("value", snap => {
+    const state = snap.val() === "occupied" ? "free" : "occupied";
+    ref.set(state);
   });
 }
 
-/* Foglalt / szabad váltása (csak szerkesztési módban) */
-function toggleSpot(id) {
-  if (!editMode) return;
-  const current = spotStates[id] || 'free';
-  spotStates[id] = current === 'free' ? 'occupied' : 'free';
-  updateSpotVisual(id);
-}
+// Indítás – DOM felrakása
+baseSpots.forEach(s => createSpot(s.n, s.x, s.y));
 
-/* Összes spot állapotának mentése localStorage-ba */
-function saveState() {
-  if (!editMode) {
-    alert('Menteni csak szerkesztési módban lehet.');
-    return;
-  }
-  const data = {};
-  for (const id in spots) {
-    const el = spots[id];
-    data[id] = {
-      x: parseFloat(el.style.left),
-      y: parseFloat(el.style.top),
-      state: spotStates[id] || 'free'
-    };
-  }
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    alert('Mentés sikeres. Az aktuális állapot ezen a gépen el lesz mentve.');
-  } catch (e) {
-    console.error(e);
-    alert('Hiba történt a mentés közben (localStorage).');
-  }
-}
+// Firebase → Live frissítés minden nézőnek
+db.ref("spots").on("value", snapshot => {
+  const data = snapshot.val() || {};
+  baseSpots.forEach(s => {
+    const st = data[s.n] || "free";
+    setVisual(s.n, st);
+  });
+});
 
-/* Betöltés induláskor */
-function loadState() {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) {
-    placeSpots();
-    return;
-  }
-  try {
-    const data = JSON.parse(raw);
-    for (const id in data) {
-      const s = data[id];
-      createSpot(id, s.x, s.y, s.state);
-    }
-  } catch (e) {
-    console.error(e);
-    placeSpots();
-  }
-}
+// --- LOGIN RÉSZ ---
+function openLogin() { document.getElementById('loginBox').style.display='block'; }
+function closeLogin() { document.getElementById('loginBox').style.display='none'; }
 
-/* Login */
-function openLogin() {
-  document.getElementById('loginBox').style.display = 'block';
-}
-function closeLogin() {
-  document.getElementById('loginBox').style.display = 'none';
-}
 function login() {
   const u = document.getElementById('user').value;
   const p = document.getElementById('pass').value;
-  if (u === 'parkrend' && p === 'peramefőnök') {
+
+  if (u === "parkrend" && p === "peramefőnök") {
     editMode = true;
-    document.getElementById('editStatus').textContent =
-      'Szerkesztési mód (foglaltság állítható + mentés engedélyezve)';
-    document.getElementById('saveBtn').disabled = false;
-    alert('Szerkesztési mód engedélyezve');
+    document.getElementById("editStatus").textContent = "Szerkesztési mód (admin)";
+    alert("Szerkesztési mód engedélyezve!");
   } else {
-    alert('Hibás adatok');
+    alert("Hibás adatok!");
   }
   closeLogin();
 }
-
-/* Új helyek felvétele kattintással (ha akarsz plusz pontokat) */
-function enableAddOnClick() {
-  const img = document.getElementById('hangarImg');
-  img.addEventListener('click', function(e) {
-    if (!editMode) return;
-
-    const container = document.getElementById('container');
-    const rect = container.getBoundingClientRect();
-    const xPercent = ((e.clientX - rect.left) / rect.width) * 100;
-    const yPercent = ((e.clientY - rect.top) / rect.height) * 100;
-
-    const idStr = prompt('Melyik azonosítót szeretnéd ide tenni? (pl. 35)');
-    if (!idStr) return;
-    const id = idStr.trim();
-    if (!id) return;
-
-    createSpot(id, xPercent, yPercent, 'free');
-  });
-}
-
-/* Indítás */
-loadState();
-enableAddOnClick();
 </script>
+
 </body>
 </html>
