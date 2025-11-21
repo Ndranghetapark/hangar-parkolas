@@ -5,271 +5,35 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Hangár parkolási rend</title>
 <style>
-  body { font-family: Arial, sans-serif; background: #f0f0f0; margin: 0; padding: 0; }
-  #container { position: relative; width: 100%; max-width: 1400px; margin: auto; }
-  #hangarImg { width: 100%; height: auto; display: block; }
+  body {
+    font-family: Arial, sans-serif;
+    background: #f0f0f0;
+    margin: 0;
+    padding: 0;
+  }
+  #container {
+    position: relative;
+    width: 100%;
+    max-width: 1400px;
+    margin: auto;
+  }
+  #hangarImg {
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+
+  /* A kattintható pont – nincs szöveg, csak glow */
   .spot {
     position: absolute;
-    color: #fff;
-    font-weight: bold;
-    cursor: pointer;
+    width: 32px;
+    height: 32px;
     transform: translate(-50%, -50%);
-    padding: 4px 6px;
-    border-radius: 4px;
-    background: rgba(0,0,0,0.5);
-    user-select: none;
-    white-space: nowrap;
-    font-size: 13px;
+    border-radius: 50%;
+    background: transparent;
+    cursor: pointer;
+    box-shadow: 0 0 0 0 rgba(0,0,0,0);
+    pointer-events: auto;
   }
-  .free { background: rgba(0,150,0,0.7); }
-  .occupied { background: rgba(170,0,0,0.7); }
-  #loginBox {
-    position: fixed;
-    top: 50%; left: 50%; transform: translate(-50%, -50%);
-    background: white; padding: 20px;
-    border-radius: 8px; box-shadow: 0 0 12px rgba(0,0,0,0.2);
-    display: none;
-    z-index: 1000;
-  }
-  #topBar {
-    padding: 8px 12px;
-    display: flex;
-    gap: 8px;
-    align-items: center;
-  }
-  #editStatus {
-    font-weight: bold;
-    color: #555;
-  }
-</style>
-</head>
-<body>
-<div id="loginBox">
-  <h3>Belépés szerkesztési módba</h3>
-  <input id="user" placeholder="Felhasználónév" /><br><br>
-  <input id="pass" placeholder="Jelszó" type="password" /><br><br>
-  <button onclick="login()">Belépés</button>
-  <button onclick="closeLogin()">Mégse</button>
-</div>
-
-<div id="topBar">
-  <button onclick="openLogin()">Szerkesztési mód</button>
-  <button id="saveBtn" onclick="saveState()" disabled>💾 Mentés</button>
-  <span id="editStatus">Néző mód</span>
-</div>
-
-<div id="container">
-  <img id="hangarImg" src="hangar.png" alt="Hangár parkolási rend" />
-</div>
-
-<script>
-let editMode = false;
-const spots = {};       // id -> DOM elem
-const spotStates = {};  // id -> 'free' | 'occupied'
-const STORAGE_KEY = 'hangar_parkolas_state';
-
-// ALAP parkolóhelyek (itt pozicionáljuk át a kért számokat)
-// Ha valami még mindig nincs pontosan a számra téve, itt a x,y százalékokat elég átírni.
-const baseSpots = [
-  {n:1,x:88,y:73},
-  {n:2,x:88,y:73},
-  {n:3,x:85,y:82},
-  {n:4,x:78,y:87},
-  {n:5,x:61,y:87},
-  {n:6,x:55,y:87},
-  {n:7,x:50,y:87},
-  {n:8,x:45,y:87},
-  {n:9,x:39,y:87},
-  {n:10,x:34,y:87},
-
-  // 11, 12, 13 áthelyezve kicsit feljebb/jobbra – itt tudod finomhangolni
-  {n:11,x:28,y:82},
-  {n:12,x:23,y:79},
-  {n:13,x:18,y:68},
-
-  {n:14,x:16,y:66},
-  {n:15,x:16,y:60},
-  {n:16,x:16,y:54},
-  {n:17,x:16,y:48},
-  {n:18,x:16,y:42},
-  {n:19,x:16,y:36},
-  {n:20,x:16,y:30},
-
-  // 21 kicsit feljebb igazítva
-  {n:21,x:16,y:26},
-
-  // 22 kissé arrébb/feljebb
-  {n:22,x:27,y:20},
-  {n:23,x:32,y:17},
-  {n:24,x:38,y:17},
-  {n:25,x:44,y:17},
-  {n:26,x:50,y:17},
-  {n:27,x:56,y:17},
-  {n:28,x:62,y:17},
-  {n:29,x:68,y:17},
-  {n:30,x:74,y:17},
-  {n:31,x:80,y:17},
-  {n:32,x:86,y:17},
-
-  // 33 áthelyezve
-  {n:33,x:85,y:30},
-  {n:34,x:88,y:38}
-];
-
-// Ikonos felirat (🟢 / 🔴)
-function updateSpotLabel(id) {
-  const el = spots[id];
-  if (!el) return;
-  const state = spotStates[id] || 'free';
-  if (state === 'free') {
-    el.textContent = id + ' 🟢';
-    el.classList.add('free');
-    el.classList.remove('occupied');
-  } else {
-    el.textContent = id + ' 🔴';
-    el.classList.add('occupied');
-    el.classList.remove('free');
-  }
-}
-
-// Új spot létrehozása vagy frissítése
-function createSpot(id, xPercent, yPercent, state) {
-  const container = document.getElementById('container');
-
-  // Ha már létezik, csak pozíciót/állapotot frissítünk
-  if (spots[id]) {
-    const el = spots[id];
-    el.style.left = xPercent + '%';
-    el.style.top = yPercent + '%';
-    if (state) {
-      spotStates[id] = state;
-    }
-    updateSpotLabel(id);
-    return;
-  }
-
-  const d = document.createElement('div');
-  d.className = 'spot';
-  d.style.left = xPercent + '%';
-  d.style.top = yPercent + '%';
-
-  spots[id] = d;
-  // Ha van mentett állapot, azt használjuk, különben 'free'
-  spotStates[id] = state || spotStates[id] || 'free';
-  updateSpotLabel(id);
-
-  d.addEventListener('click', function(e) {
-    e.stopPropagation(); // ne lője el a kép kattját
-    toggleSpot(id);
-  });
-
-  container.appendChild(d);
-}
-
-// Alap helyek kirakása (ha nincs mentett állapot)
-function placeSpots() {
-  baseSpots.forEach(s => {
-    createSpot(String(s.n), s.x, s.y, 'free');
-  });
-}
-
-// Foglalt / szabad váltás (csak szerkesztési módban)
-function toggleSpot(id) {
-  if (!editMode) return;
-  const current = spotStates[id] || 'free';
-  spotStates[id] = current === 'free' ? 'occupied' : 'free';
-  updateSpotLabel(id);
-}
-
-// Mentés gomb – összes pont elmentése localStorage-ba
-function saveState() {
-  if (!editMode) {
-    alert('Menteni csak szerkesztési módban lehet.');
-    return;
-  }
-  const data = {};
-  for (const id in spots) {
-    const el = spots[id];
-    data[id] = {
-      x: parseFloat(el.style.left),
-      y: parseFloat(el.style.top),
-      state: spotStates[id] || 'free'
-    };
-  }
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    alert('Mentés sikeres. Az aktuális állapot ezen a gépen el lesz mentve.');
-  } catch (e) {
-    console.error(e);
-    alert('Hiba történt a mentés közben (localStorage).');
-  }
-}
-
-// Betöltés oldal induláskor – ha van mentett állapot, azt használjuk
-function loadState() {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) {
-    placeSpots();
-    return;
-  }
-  try {
-    const data = JSON.parse(raw);
-    for (const id in data) {
-      const s = data[id];
-      createSpot(id, s.x, s.y, s.state);
-    }
-  } catch (e) {
-    console.error(e);
-    // ha valami rossz a mentéssel, kezdjük az alaphelyzettel
-    placeSpots();
-  }
-}
-
-// Login kezelése
-function openLogin() {
-  document.getElementById('loginBox').style.display = 'block';
-}
-function closeLogin() {
-  document.getElementById('loginBox').style.display = 'none';
-}
-function login() {
-  const u = document.getElementById('user').value;
-  const p = document.getElementById('pass').value;
-  if (u === 'parkrend' && p === 'peramefőnök') {
-    editMode = true;
-    document.getElementById('editStatus').textContent =
-      'Szerkesztési mód (foglaltság állítható + mentés engedélyezve)';
-    document.getElementById('saveBtn').disabled = false;
-    alert('Szerkesztési mód engedélyezve');
-  } else {
-    alert('Hibás adatok');
-  }
-  closeLogin();
-}
-
-// Új helyek felvétele kattintással (csak szerkesztési módban)
-function enableAddOnClick() {
-  const img = document.getElementById('hangarImg');
-  img.addEventListener('click', function(e) {
-    if (!editMode) return;
-
-    const container = document.getElementById('container');
-    const rect = container.getBoundingClientRect();
-    const xPercent = ((e.clientX - rect.left) / rect.width) * 100;
-    const yPercent = ((e.clientY - rect.top) / rect.height) * 100;
-
-    const idStr = prompt('Melyik számot szeretnéd ide tenni? (pl. 35)');
-    if (!idStr) return;
-    const id = idStr.trim();
-    if (!id) return;
-
-    createSpot(id, xPercent, yPercent, 'free');
-  });
-}
-
-// Indítás
-loadState();
-enableAddOnClick();
-</script>
-</body>
-</html>
+  /* Szabad: zöld fényudvar */
+  .s
