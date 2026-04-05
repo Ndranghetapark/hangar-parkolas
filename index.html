@@ -34,6 +34,7 @@
     box-shadow: 0 0 0 0 rgba(0,0,0,0);
     pointer-events: auto;
     z-index: 5;
+    touch-action: manipulation;
   }
   .spot.free {
     box-shadow: 0 0 14px 5px rgba(0, 255, 0, 0.9);
@@ -114,6 +115,126 @@
     justify-content: flex-end;
     flex-wrap: wrap;
   }
+
+  /* ===== MOBIL OPTIMALIZÁLÁS ===== */
+  @media (max-width: 900px) {
+    #topBar {
+      gap: 6px;
+      padding: 10px;
+    }
+
+    #topBar button,
+    #topBar span {
+      font-size: 14px;
+    }
+
+    .spot {
+      width: 38px;
+      height: 38px;
+    }
+
+    .spot-label {
+      font-size: 11px;
+      padding: 2px 5px;
+      max-width: 130px;
+    }
+
+    #loginBox,
+    #editorBox {
+      width: calc(100vw - 32px);
+      max-width: 420px;
+      min-width: unset;
+      padding: 16px;
+      border-radius: 12px;
+    }
+
+    #loginBox input,
+    #editorBox input,
+    #editorBox select {
+      font-size: 16px;
+    }
+
+    #editorActions {
+      gap: 6px;
+    }
+
+    #editorActions button,
+    #loginBox button,
+    #topBar button {
+      min-height: 42px;
+      font-size: 14px;
+    }
+  }
+
+  @media (max-width: 640px) {
+    body {
+      padding: 0;
+    }
+
+    #topBar {
+      position: sticky;
+      top: 0;
+      z-index: 900;
+      background: rgba(240,240,240,0.96);
+      backdrop-filter: blur(6px);
+      padding: 10px 8px;
+      justify-content: flex-start;
+    }
+
+    #topBar button {
+      font-size: 13px;
+      padding: 8px 10px;
+    }
+
+    #editStatus {
+      font-size: 13px;
+      width: 100%;
+    }
+
+    #container {
+      width: 100%;
+      max-width: 100%;
+      overflow-x: auto;
+    }
+
+    #hangarImg {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    .spot {
+      width: 42px;
+      height: 42px;
+    }
+
+    .spot-label {
+      font-size: 10px;
+      padding: 2px 4px;
+      max-width: 110px;
+    }
+
+    #loginBox,
+    #editorBox {
+      width: calc(100vw - 24px);
+      max-width: none;
+      padding: 14px;
+    }
+
+    #editorTitle {
+      font-size: 18px;
+      margin-top: 0;
+    }
+
+    #editorActions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+    }
+
+    #editorActions button:last-child {
+      grid-column: 1 / -1;
+    }
+  }
 </style>
 </head>
 <body>
@@ -129,7 +250,7 @@
   <h3 id="editorTitle">Parkoló szerkesztése</h3>
 
   <label for="editorName">Név</label>
-  <input id="editorName" type="text" placeholder="Pl. Samuel" />
+  <input id="editorName" type="text" placeholder="Pl. Lorenzo Costanzo" />
 
   <label for="editorState">Állapot</label>
   <select id="editorState">
@@ -172,7 +293,7 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
-// ---- APP LOGIKA ----
+// ---- WEBOLDAL MŰKÖDÉSE ----
 let editMode = false;
 let coordMode = false;
 let currentEditingSpotId = null;
