@@ -33,6 +33,7 @@
     cursor: pointer;
     box-shadow: 0 0 0 0 rgba(0,0,0,0);
     pointer-events: auto;
+    z-index: 5;
   }
   .spot.free {
     box-shadow: 0 0 14px 5px rgba(0, 255, 0, 0.9);
@@ -41,7 +42,26 @@
     box-shadow: 0 0 14px 5px rgba(255, 0, 0, 0.9);
   }
 
-  #loginBox {
+  .spot-label {
+    position: absolute;
+    transform: translate(-50%, -100%);
+    background: rgba(255,255,255,0.92);
+    color: #111;
+    font-size: 12px;
+    font-weight: bold;
+    padding: 2px 6px;
+    border-radius: 6px;
+    white-space: nowrap;
+    z-index: 6;
+    pointer-events: none;
+    border: 1px solid rgba(0,0,0,0.15);
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  #loginBox,
+  #editorBox {
     position: fixed;
     top: 50%; left: 50%;
     transform: translate(-50%, -50%);
@@ -52,6 +72,7 @@
     display: none;
     z-index: 1000;
   }
+
   #topBar {
     padding: 8px 12px;
     display: flex;
@@ -67,6 +88,32 @@
     opacity: 0.4;
     cursor: not-allowed;
   }
+
+  #editorBox {
+    min-width: 320px;
+  }
+
+  #editorBox label {
+    display: block;
+    margin-bottom: 6px;
+    font-weight: bold;
+  }
+
+  #editorBox input,
+  #editorBox select {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px;
+    margin-top: 6px;
+    margin-bottom: 12px;
+  }
+
+  #editorActions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
 </style>
 </head>
 <body>
@@ -76,6 +123,25 @@
   <input id="pass" placeholder="Jelszó" type="password" /><br><br>
   <button onclick="login()">Belépés</button>
   <button onclick="closeLogin()">Mégse</button>
+</div>
+
+<div id="editorBox">
+  <h3 id="editorTitle">Parkoló szerkesztése</h3>
+
+  <label for="editorName">Név</label>
+  <input id="editorName" type="text" placeholder="Pl. Samuel" />
+
+  <label for="editorState">Állapot</label>
+  <select id="editorState">
+    <option value="free">Szabad</option>
+    <option value="occupied">Foglalt</option>
+  </select>
+
+  <div id="editorActions">
+    <button onclick="clearEditorSpot()">Ürítés</button>
+    <button onclick="closeEditor()">Mégse</button>
+    <button onclick="applyEditorChanges()">Alkalmazás</button>
+  </div>
 </div>
 
 <div id="topBar">
@@ -89,12 +155,10 @@
   <img id="hangarImg" src="hangarkesz.png" alt="Hangár parkolási rend" />
 </div>
 
-<!-- Firebase (compat) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 
 <script>
-// 🔧 Firebase config
 const firebaseConfig = {
   apiKey: "AIzaSyD83Ad3v0ZsI1QaqjzXvg4X-we1GP3NAcM",
   authDomain: "hangar-parkolas.firebaseapp.com",
@@ -111,9 +175,12 @@ const db = firebase.database();
 // ---- APP LOGIKA ----
 let editMode = false;
 let coordMode = false;
+let currentEditingSpotId = null;
 
-const spots = {};       // id -> DOM elem
-const spotStates = {};  // id -> 'free' | 'occupied'
+const spots = {};        // id -> DOM elem
+const labels = {};       // id -> DOM label
+const spotStates = {};   // id -> 'free' | 'occupied'
+const spotNames = {};    // id -> név
 
 const baseSpots = [
   {n:1,x:86.7,y:70.3},
@@ -171,20 +238,30 @@ const baseSpots = [
   {n:53,x:52.9,y:69.5},
   {n:54,x:59.8,y:69.5},
   {n:55,x:66.3,y:69.5},
-  {n:56,x:73.6,y:69.5},
-  
+  {n:56,x:73.6,y:69.5}
 ];
 
-// ---- VIZUÁLIS FRISSÍTÉS ----
 function updateSpotVisual(id) {
   const el = spots[id];
   if (!el) return;
+
   const state = spotStates[id] || 'free';
   el.classList.toggle('free', state === 'free');
   el.classList.toggle('occupied', state === 'occupied');
+
+  const label = labels[id];
+  if (label) {
+    const name = (spotNames[id] || '').trim();
+    if (name && state === 'occupied') {
+      label.textContent = `${id} – ${name}`;
+      label.style.display = 'block';
+    } else {
+      label.textContent = '';
+      label.style.display = 'none';
+    }
+  }
 }
 
-// ---- SPOT LÉTREHOZÁSA ----
 function createSpot(id, xPercent, yPercent) {
   const container = document.getElementById('container');
 
@@ -192,6 +269,12 @@ function createSpot(id, xPercent, yPercent) {
     const el = spots[id];
     el.style.left = xPercent + '%';
     el.style.top = yPercent + '%';
+
+    if (labels[id]) {
+      labels[id].style.left = xPercent + '%';
+      labels[id].style.top = (yPercent - 2) + '%';
+    }
+
     updateSpotVisual(id);
     return;
   }
@@ -201,40 +284,85 @@ function createSpot(id, xPercent, yPercent) {
   d.style.left = xPercent + '%';
   d.style.top = yPercent + '%';
 
+  const label = document.createElement('div');
+  label.className = 'spot-label';
+  label.style.left = xPercent + '%';
+  label.style.top = (yPercent - 2) + '%';
+  label.style.display = 'none';
+
   spots[id] = d;
+  labels[id] = label;
+
   if (!spotStates[id]) spotStates[id] = 'free';
-  updateSpotVisual(id);
+  if (!spotNames[id]) spotNames[id] = '';
 
   d.addEventListener('click', function(e) {
     e.stopPropagation();
-    toggleLocalState(id);
+    if (!editMode) return;
+    openEditor(id);
   });
 
+  container.appendChild(label);
   container.appendChild(d);
-}
 
-// ---- HELYI FOGALTSÁG VÁLTÁS (MENTÉS NÉLKÜL) ----
-function toggleLocalState(id) {
-  if (!editMode) return;
-  const current = spotStates[id] || 'free';
-  spotStates[id] = current === 'free' ? 'occupied' : 'free';
   updateSpotVisual(id);
 }
 
-// ---- MENTÉS GOMB → FIREBASE ----
+function openEditor(id) {
+  currentEditingSpotId = id;
+  document.getElementById('editorTitle').textContent = `Parkoló szerkesztése: ${id}`;
+  document.getElementById('editorName').value = spotNames[id] || '';
+  document.getElementById('editorState').value = spotStates[id] || 'free';
+  document.getElementById('editorBox').style.display = 'block';
+}
+
+function closeEditor() {
+  currentEditingSpotId = null;
+  document.getElementById('editorBox').style.display = 'none';
+}
+
+function applyEditorChanges() {
+  if (!currentEditingSpotId) return;
+
+  const id = currentEditingSpotId;
+  const name = document.getElementById('editorName').value.trim();
+  const state = document.getElementById('editorState').value;
+
+  spotStates[id] = state;
+  spotNames[id] = state === 'occupied' ? name : '';
+
+  updateSpotVisual(id);
+  closeEditor();
+}
+
+function clearEditorSpot() {
+  if (!currentEditingSpotId) return;
+
+  const id = currentEditingSpotId;
+  spotStates[id] = 'free';
+  spotNames[id] = '';
+
+  updateSpotVisual(id);
+  closeEditor();
+}
+
 function saveState() {
   if (!editMode) {
     alert('Menteni csak szerkesztési módban lehet.');
     return;
   }
-  const states = {};
+
+  const dataToSave = {};
   for (const id in spots) {
-    states[id] = spotStates[id] || 'free';
+    dataToSave[id] = {
+      state: spotStates[id] || 'free',
+      name: spotNames[id] || ''
+    };
   }
 
-  db.ref('spots').set(states)
+  db.ref('spots').set(dataToSave)
     .then(() => {
-      alert('Mentés sikeres. Az aktuális állapot elmentve a szerverre.');
+      alert('Mentés sikeres.');
     })
     .catch(err => {
       console.error(err);
@@ -242,31 +370,34 @@ function saveState() {
     });
 }
 
-// ---- INDÍTÁS ----
 function init() {
   const container = document.getElementById('container');
   const img = document.getElementById('hangarImg');
 
-  // buborékok létrehozása fix pozíciókból
   baseSpots.forEach(s => {
     const id = String(s.n);
     createSpot(id, s.x, s.y);
   });
 
-  // Firebase-ből állapot figyelése
   db.ref('spots').on('value', snapshot => {
     const data = snapshot.val() || {};
+
     for (const id in spots) {
-      if (data[id] === 'free' || data[id] === 'occupied') {
+      if (data[id] && typeof data[id] === 'object') {
+        spotStates[id] = data[id].state === 'occupied' ? 'occupied' : 'free';
+        spotNames[id] = typeof data[id].name === 'string' ? data[id].name : '';
+      } else if (data[id] === 'occupied' || data[id] === 'free') {
         spotStates[id] = data[id];
+        spotNames[id] = '';
       } else {
         spotStates[id] = 'free';
+        spotNames[id] = '';
       }
+
       updateSpotVisual(id);
     }
   });
 
-  // Koordináta mód – kattintásra x/y% kiírás
   img.addEventListener('click', function(e) {
     if (!coordMode) return;
     const rect = container.getBoundingClientRect();
@@ -278,20 +409,22 @@ function init() {
   });
 }
 
-// ---- LOGIN ----
 function openLogin() {
   document.getElementById('loginBox').style.display = 'block';
 }
+
 function closeLogin() {
   document.getElementById('loginBox').style.display = 'none';
 }
+
 function login() {
   const u = document.getElementById('user').value;
   const p = document.getElementById('pass').value;
+
   if (u === 'parkrend' && p === 'peramefőnök') {
     editMode = true;
     document.getElementById('editStatus').textContent =
-      'Szerkesztési mód (foglaltság állítható + mentés engedélyezve)';
+      'Szerkesztési mód (név + foglaltság + mentés)';
     document.getElementById('saveBtn').disabled = false;
     alert('Szerkesztési mód engedélyezve');
   } else {
@@ -300,7 +433,6 @@ function login() {
   closeLogin();
 }
 
-// ---- KOORDINÁTA MÓD KAPCSOLÓ ----
 function toggleCoordMode() {
   coordMode = !coordMode;
   const btn = document.getElementById('coordBtn');
@@ -310,7 +442,6 @@ function toggleCoordMode() {
   }
 }
 
-// indítás
 init();
 </script>
 </body>
